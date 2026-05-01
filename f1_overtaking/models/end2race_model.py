@@ -75,19 +75,19 @@ class _End2RaceGRU(nn.Module):
         """Return per-timestep logits, shape (B, T)."""
         B, T, _ = dist_feats.shape
 
-        pressure = self.pressure_token(dist_feats, k=self.pressure_k)     # (B, T, n_dist)
+        pressure = self.pressure_token(dist_feats, k=self.pressure_k)     
 
-        speed_embed = self.speed_proj(speed_feat.unsqueeze(-1))          # (B, T, E)
+        speed_embed = self.speed_proj(speed_feat.unsqueeze(-1))         
 
         if self.training and self.mask_prob > 0:
             mask = (torch.rand(B, T, 1, device=speed_embed.device)
                     < self.mask_prob).float()
             speed_embed = (1.0 - mask) * speed_embed + mask * self.mask_token
 
-        obs = torch.cat([pressure, speed_embed, other_feats], dim=-1)    # (B, T, D)
+        obs = torch.cat([pressure, speed_embed, other_feats], dim=-1)  
 
-        h_seq, _ = self.gru(obs)                                         # (B, T, H)
-        logits = self.head(h_seq).squeeze(-1)                            # (B, T)
+        h_seq, _ = self.gru(obs)                                        
+        logits = self.head(h_seq).squeeze(-1)                        
         return logits
 
 
@@ -188,8 +188,8 @@ class End2RaceModel:
                 yb = yb.to(self.device)
 
                 opt.zero_grad()
-                logits_seq = self.model(dxb, sxb, oxb)                  # (B, T)
-                y_expand = yb.unsqueeze(1).expand_as(logits_seq)        # (B, T)
+                logits_seq = self.model(dxb, sxb, oxb)                 
+                y_expand = yb.unsqueeze(1).expand_as(logits_seq)      
                 loss = crit(logits_seq, y_expand)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -247,7 +247,7 @@ class End2RaceModel:
                 dxb = torch.tensor(D[sl]).to(self.device)
                 sxb = torch.tensor(S[sl]).to(self.device)
                 oxb = torch.tensor(O[sl]).to(self.device)
-                logits_seq = self.model(dxb, sxb, oxb)                  # (B, T)
-                logits = logits_seq[:, -1]                              # last timestep
+                logits_seq = self.model(dxb, sxb, oxb)                 
+                logits = logits_seq[:, -1]                             
                 out.append(torch.sigmoid(logits).cpu().numpy())
         return np.concatenate(out, axis=0)

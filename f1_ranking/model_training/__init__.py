@@ -1,12 +1,3 @@
-"""Stage 3 — train and predict with each model on walk-forward folds.
-
-Models:
-    grid_baseline   parameter-free reference (predicted finish == grid pos)
-    extratrees      best tree ensemble — main model
-    xgboost         gradient-boosted trees — secondary tree benchmark
-    tabnet          attention-based tabular DL + parity booster
-"""
-
 from .splits_and_rank import walk_forward_split, rank_within_race, impute_train_test
 from .grid_baseline import grid_baseline_predictions
 from .extratrees_model import train_extratrees
@@ -21,6 +12,10 @@ from .save_full_models import (
     save_full_extratrees,
     save_full_xgboost,
     save_full_tabnet,
+)
+from .lgbm_xgb_ensemble import (
+    train_lgbm_xgb_ensemble,
+    save_full_lgbm_xgb_ensemble,
 )
 
 __all__ = [
@@ -38,4 +33,6 @@ __all__ = [
     "save_full_extratrees",
     "save_full_xgboost",
     "save_full_tabnet",
+    "train_lgbm_xgb_ensemble",
+    "save_full_lgbm_xgb_ensemble",
 ]

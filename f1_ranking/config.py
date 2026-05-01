@@ -2,9 +2,24 @@ from pathlib import Path
 
 YEARS = [2022, 2023, 2024, 2025]
 
+
+def _find_data_root(start: Path) -> Path:
+    """Walk up from `start` looking for a directory that contains
+    `data/all_laps_2022_2025_v2.pkl`. Falls back to `start.parent`."""
+    target = Path("data") / "all_laps_2022_2025_v2.pkl"
+    cur = start.resolve()
+    for _ in range(6):
+        if (cur / target).exists():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return start.parent
+
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_DIR
-ARTIFACT_ROOT = PROJECT_DIR / "model_artifacts_2022_2025_new"
+DATA_DIR = _find_data_root(PROJECT_DIR)
+ARTIFACT_ROOT = DATA_DIR / "model_artifacts_2022_2025_new"
 
 SESSION_FOLDER_MAP = {
     "FP1": "Practice 1",
@@ -38,6 +53,33 @@ DEFAULT_XGB_PARAMS = {
     "gamma": 0.0,
 }
 
+ENSEMBLE_MAX_POS = 20
+
+DEFAULT_LGBM_RANKER_PARAMS = {
+    "objective": "lambdarank",
+    "metric": "ndcg",
+    "ndcg_eval_at": [5, 10, 20],
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_child_samples": 5,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 5,
+    "verbose": -1,
+    "n_estimators": 300,
+    "force_row_wise": True,
+}
+
+DEFAULT_XGB_RANKER_PARAMS = {
+    "objective": "rank:pairwise",
+    "learning_rate": 0.05,
+    "max_depth": 5,
+    "n_estimators": 300,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "verbosity": 0,
+}
+
 DEFAULT_TABNET_PARAMS = {
     "n_d": 32,
     "n_a": 32,
@@ -59,7 +101,7 @@ DEFAULT_TABNET_PARAMS = {
 def ensure_dirs():
     """Create cache and artifact directories if missing."""
     for y in YEARS:
-        (PROJECT_DIR / str(y) / "cache").mkdir(parents=True, exist_ok=True)
+        (DATA_DIR / str(y) / "cache").mkdir(parents=True, exist_ok=True)
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     (ARTIFACT_ROOT / "models").mkdir(parents=True, exist_ok=True)
     (ARTIFACT_ROOT / "shap").mkdir(parents=True, exist_ok=True)

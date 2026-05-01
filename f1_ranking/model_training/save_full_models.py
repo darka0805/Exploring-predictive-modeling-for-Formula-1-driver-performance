@@ -1,8 +1,3 @@
-"""Stage 6 — refit ExtraTrees / XGBoost / TabNet on the full dataset and save weights.
-
-Mirrors the final cell of the notebook so trained artifacts can be reused without
-re-running the walk-forward search.
-"""
 from __future__ import annotations
 
 import json

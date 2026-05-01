@@ -24,7 +24,6 @@ class _CNN(nn.Module):
         )
 
     def forward(self, x):
-        # x: (B, T, F) → (B, F, T)
         h = self.conv(x.permute(0, 2, 1)).squeeze(-1)
         return self.head(h).squeeze(-1)
 

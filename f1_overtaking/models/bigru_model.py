@@ -21,7 +21,7 @@ class _BiGRU(nn.Module):
         )
 
     def forward(self, x):
-        out, _ = self.gru(x)          # (B, T, 2H)
+        out, _ = self.gru(x)         
         last = out[:, -1, :]          
         return self.head(last).squeeze(-1)
 
@@ -67,7 +67,7 @@ class _BiGRUAttention(nn.Module):
         )
 
     def forward(self, x):
-        out, _ = self.gru(x)                  # (B, T, 2H)
+        out, _ = self.gru(x)                 
         attn_out, _ = self.attn(out, out, out, need_weights=False)
         h = self.norm(out + attn_out)
 

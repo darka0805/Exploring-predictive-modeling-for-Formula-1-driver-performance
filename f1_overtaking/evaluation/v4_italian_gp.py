@@ -36,7 +36,7 @@ def run_italian_exclusion(all_models: bool = True) -> pd.DataFrame:
 
     rows: list[dict] = []
     model_names = (list(MODEL_REGISTRY.keys()) if all_models
-                   else ["xgboost", "lgbm"])
+                   else ["xgboost", "rf"])
 
     print("\n--- Baseline: All tracks (Abu Dhabi + Bahrain + Monza) ---")
     all_path = build_multi_race_dataset(

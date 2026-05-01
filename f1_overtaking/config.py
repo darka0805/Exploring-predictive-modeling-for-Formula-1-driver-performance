@@ -127,18 +127,6 @@ XGB_PARAMS = dict(
     random_state=SEED,
 )
 
-LGBM_PARAMS = dict(
-    n_estimators=500,
-    max_depth=6,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    metric="average_precision",
-    n_jobs=-1,
-    random_state=SEED,
-    verbose=-1,
-)
-
 DL_BATCH_SIZE = 256
 DL_EPOCHS = 40
 DL_LR = 1e-3
@@ -172,14 +160,6 @@ E7_MODEL_SWEEPS: dict[str, list[dict]] = {
         "colsample_bytree": [0.8],
         "min_child_weight": [1, 3],
         "tree_method": ["hist"],
-    }),
-    "lgbm": _expand_grid({
-        "n_estimators": [300, 500, 800],
-        "max_depth": [6, -1],
-        "num_leaves": [31, 63, 127],
-        "learning_rate": [0.02, 0.05],
-        "subsample": [0.8],
-        "colsample_bytree": [0.8],
     }),
     "rf": _expand_grid({
         "n_estimators": [300, 600, 900],
@@ -222,12 +202,12 @@ E7_MODEL_SWEEPS: dict[str, list[dict]] = {
 E7_STACKING_CONFIGS = [
     {
         "name": "stack_lr_all5",
-        "base_models": ["xgboost", "lgbm", "rf", "cnn", "bigru"],
+        "base_models": ["xgboost", "rf", "cnn", "bigru"],
         "meta_c": 1.0,
     },
     {
         "name": "stack_lr_tree_plus_seq",
-        "base_models": ["bigru", "lgbm", "xgboost"],
+        "base_models": ["bigru", "xgboost", "rf"],
         "meta_c": 0.7,
     },
 ]

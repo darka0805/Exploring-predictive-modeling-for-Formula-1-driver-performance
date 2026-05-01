@@ -110,7 +110,7 @@ def run_all_experiments(model_names: list[str] | None = None) -> pd.DataFrame:
         X_tr_id = _add_race_id(ad22_23["X"], ad22_23["meta"])
         X_te_id = _add_race_id(ad24["X"], ad24["meta"])
         tree_models = [m for m in (model_names or list(MODEL_REGISTRY.keys()))
-                       if m in ("xgboost", "lgbm")]
+                       if m in ("xgboost", "rf")]
         if tree_models:
             all_results.extend(run_experiment(
                 "E4_race_id", X_tr_id, ad22_23["y"],
@@ -128,7 +128,7 @@ def run_all_experiments(model_names: list[str] | None = None) -> pd.DataFrame:
         if td is None or ad22_23 is None:
             continue
         tree_models = [m for m in (model_names or list(MODEL_REGISTRY.keys()))
-                       if m in ("xgboost", "lgbm")]
+                       if m in ("xgboost", "rf")]
         all_results.extend(run_experiment(
             f"E5_cross_{track.split()[0]}_2023",
             ad22_23["X"], ad22_23["y"],
@@ -143,7 +143,7 @@ def run_all_experiments(model_names: list[str] | None = None) -> pd.DataFrame:
     all_ds = _load(all_p)
     if all_ds and ad24:
         tree_models = [m for m in (model_names or list(MODEL_REGISTRY.keys()))
-                       if m in ("xgboost", "lgbm")]
+                       if m in ("xgboost",)]
         all_results.extend(run_experiment(
             "E6_all_tracks", all_ds["X"], all_ds["y"],
             ad24["X"], ad24["y"], tree_models))

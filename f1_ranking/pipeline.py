@@ -1,8 +1,7 @@
 from config import YEARS, ARTIFACT_ROOT, ensure_dirs
 from data_preprocessing import load_all_laps_and_results
 from data_preprocessing.feature_engineering import build_dataset
-# import warnings
-# warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+
 from model_training import (
     walk_forward_split,
     grid_baseline_predictions,
@@ -11,9 +10,11 @@ from model_training import (
     tune_tabnet,
     calibrate_tabnet,
     train_parity_booster,
+    train_lgbm_xgb_ensemble,
     save_full_extratrees,
     save_full_xgboost,
     save_full_tabnet,
+    save_full_lgbm_xgb_ensemble,
 )
 from evaluation import (
     evaluate_predictions,
@@ -75,6 +76,11 @@ def run_full_pipeline(years=YEARS,
     et_eval = evaluate_predictions(et_preds)
     print_overall_summary(et_eval, model_name="ExtraTrees")
 
+    print("\n--- LightGBM + XGBoost ranker ensemble ---")
+    ens_preds, ens_lgb, ens_xgb = train_lgbm_xgb_ensemble(folds)
+    ens_eval = evaluate_predictions(ens_preds)
+    print_overall_summary(ens_eval, model_name="LGBM+XGB Ensemble")
+
     best_xgb = None
     best_tabnet = None
     parity = None
@@ -105,7 +111,8 @@ def run_full_pipeline(years=YEARS,
     print("\n" + "#" * 60)
     print("#  STAGE 4 — EVALUATION")
     print("#" * 60)
-    eval_dfs = {"Grid Baseline (lower bound)": baseline_eval, "ExtraTrees": et_eval}
+    eval_dfs = {"Grid Baseline (lower bound)": baseline_eval, "ExtraTrees": et_eval,
+                "LGBM+XGB Ensemble": ens_eval}
     if best_xgb is not None:
         eval_dfs["XGBoost"] = best_xgb["eval_df"]
     if parity is not None:
@@ -171,6 +178,7 @@ def run_full_pipeline(years=YEARS,
                                                   walkforward_model=et_model)
         xgb_params = best_xgb["params"] if best_xgb else None
         saved_model_files += save_full_xgboost(dataset, feature_cols, params=xgb_params)
+        saved_model_files += save_full_lgbm_xgb_ensemble(dataset, feature_cols)
         if best_tabnet is not None:
             saved_model_files += save_full_tabnet(
                 dataset, feature_cols,
@@ -194,6 +202,8 @@ def run_full_pipeline(years=YEARS,
         "folds": folds,
         "baseline": {"predictions": baseline_preds, "eval": baseline_eval},
         "extratrees": {"predictions": et_preds, "eval": et_eval, "model": et_model},
+        "lgbm_xgb_ensemble": {"predictions": ens_preds, "eval": ens_eval,
+                              "lgb_model": ens_lgb, "xgb_model": ens_xgb},
         "xgboost": best_xgb,
         "tabnet": best_tabnet,
         "tabnet_parity": parity,

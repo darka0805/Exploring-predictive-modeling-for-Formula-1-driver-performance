@@ -30,7 +30,6 @@ from train import train_and_evaluate
 warnings.filterwarnings("ignore")
 
 
-# ----- data helpers -----
 
 def to_1_to_k_balance(X: np.ndarray, y: np.ndarray,
                       neg_per_pos: int = E7_NEG_POS_RATIO,
@@ -71,7 +70,6 @@ def safe_score(value: float) -> float:
     return float(value)
 
 
-# ----- stacking -----
 
 def run_stacking_ensembles(best_cfg_by_model: dict[str, dict],
                            fitted_full_models: dict[str, object],
@@ -150,7 +148,6 @@ def run_stacking_ensembles(best_cfg_by_model: dict[str, dict],
     return pd.DataFrame(rows).sort_values("pr_auc", ascending=False)
 
 
-# ----- full-data rerun -----
 
 def rerun_top_models_on_full_data(final_df: pd.DataFrame,
                                   best_cfg_by_model: dict[str, dict],
@@ -208,8 +205,6 @@ def rerun_top_models_on_full_data(final_df: pd.DataFrame,
     return pd.DataFrame(rows).sort_values("f1", ascending=False)
 
 
-# ----- markdown report -----
-
 def _markdown_table(df: pd.DataFrame) -> str:
     cols = list(df.columns)
     lines = [
@@ -221,49 +216,46 @@ def _markdown_table(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def write_report(report_path: Path,
-                 class_stats: pd.DataFrame,
-                 sweep_summary: pd.DataFrame,
-                 top_trials: pd.DataFrame,
-                 stacking_df: pd.DataFrame,
-                 final_df: pd.DataFrame,
-                 full_rerun_df: pd.DataFrame,
-                 plots: dict[str, str]):
-    lines: list[str] = []
-    lines.append("# 2025 Holdout Experiments (2022-2024 Train, 2025 Test)")
-    lines.append("")
-    lines.append("## Setup")
-    lines.append("")
-    lines.append("- Track: Abu Dhabi Grand Prix")
-    lines.append("- Train years: 2022, 2023, 2024")
-    lines.append("- Test year: 2025")
-    lines.append(f"- Train balancing: successful:unsuccessful = 1:{E7_NEG_POS_RATIO}")
-    lines.append("- Model families used: XGBoost, LightGBM, RandomForest, CNN, BiGRU")
-    lines.append("")
-    lines.append("## Class Distribution"); lines.append("")
-    lines.append(_markdown_table(class_stats)); lines.append("")
-    lines.append("## Sweep Coverage"); lines.append("")
-    lines.append(_markdown_table(sweep_summary)); lines.append("")
-    lines.append("## Top Validation Trials (per model)"); lines.append("")
-    lines.append(_markdown_table(top_trials)); lines.append("")
-    lines.append("## Final 2025 Test Results (Base Models)"); lines.append("")
-    lines.append(_markdown_table(final_df)); lines.append("")
-    lines.append("## Stacking Ensembles"); lines.append("")
-    lines.append("No stacking results generated."
-                 if len(stacking_df) == 0 else _markdown_table(stacking_df))
-    lines.append("")
-    lines.append("## Best Models Rerun On Full 2022-2024 Raw Train Data")
-    lines.append("")
-    lines.append("No full-data reruns generated."
-                 if len(full_rerun_df) == 0 else _markdown_table(full_rerun_df))
-    lines.append("")
-    lines.append("## Generated Plots"); lines.append("")
-    for name, rel in plots.items():
-        lines.append(f"- {name}: {rel}")
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+def write_report(report_path: Path, class_stats, sweep_summary, top_trials, 
+                 stacking_df, final_df, full_rerun_df, plots):
+    
+    with open(report_path, "w", encoding="utf-8") as f:
+        print(f"# 2025 Holdout Experiments", file=f)
+        print(f"\n## Setup", file=f)
+        print(f"- Track: Abu Dhabi Grand Prix", file=f)
+        print(f"- Train: 2022-2024 | Test: 2025", file=f)
+        print(f"- Ratio: 1:{E7_NEG_POS_RATIO}", file=f)
+        print(f"- Models: XGBoost, RandomForest, CNN, BiGRU", file=f)
+
+        print(f"\n## Data Stats", file=f)
+        print(_markdown_table(class_stats), file=f)
+
+        print(f"\n## Sweep Summary", file=f)
+        print(_markdown_table(sweep_summary), file=f)
+
+        print(f"\n## Top Validation Trials", file=f)
+        print(_markdown_table(top_trials), file=f)
+
+        print(f"\n## Final 2025 Test Results", file=f)
+        print(_markdown_table(final_df), file=f)
+
+        print(f"\n## Stacking Results", file=f)
+        if not stacking_df.empty:
+            print(_markdown_table(stacking_df), file=f)
+        else:
+            print("_No stacking results generated._", file=f)
+
+        print(f"\n## Full Data Reruns", file=f)
+        if not full_rerun_df.empty:
+            print(_markdown_table(full_rerun_df), file=f)
+        else:
+            print("_No full-data reruns._", file=f)
+
+        print(f"\n## Plots", file=f)
+        for name, path in plots.items():
+            print(f"- **{name}**: {path}", file=f)
 
 
-# ----- main orchestrator -----
 
 def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     np.random.seed(SEED)

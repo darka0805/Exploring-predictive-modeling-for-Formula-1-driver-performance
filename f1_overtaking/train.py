@@ -11,7 +11,7 @@ from evaluation.evaluate import compute_metrics, print_metrics, plot_pr_roc, plo
 def save_model_weights(model, tag: str, save_dir: Path | None = None) -> Path:
     """Persist model weights to saved_models/.
 
-    Tree models (XGBoost, LGBM, RF) are pickled.
+    Tree models (XGBoost, RF) are pickled.
     DL models (CNN, BiGRU, End2Race) are saved via torch.save.
     Returns the path where weights were written.
     """

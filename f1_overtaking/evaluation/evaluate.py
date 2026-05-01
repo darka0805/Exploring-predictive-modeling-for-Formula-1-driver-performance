@@ -142,8 +142,6 @@ def print_metrics(metrics: dict, label: str = ""):
     print(f"{'─' * 50}")
 
 
-# ----- E7 plot helpers -----
-
 def plot_class_balance(y_train_raw: np.ndarray,
                        y_train_bal: np.ndarray,
                        y_test: np.ndarray,
