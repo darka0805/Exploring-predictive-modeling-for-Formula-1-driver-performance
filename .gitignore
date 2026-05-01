@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# FastF1 cache
+**/cache/
+*.ff1pkl
+*.sqlite
+*.sqlite-journal
+
+# Model weights / artefacts
+weights/
+*.pt
+*.pth
+*.ckpt
+*.joblib
+*.pkl
+
+# Pipeline outputs
+results/
+**/results/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
