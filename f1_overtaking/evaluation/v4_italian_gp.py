@@ -1,7 +1,3 @@
-"""V4: Does the Italian GP (Monza) hurt the model?
-
-Trains with all 3 tracks vs. without Monza, tests on Abu Dhabi 2025.
-"""
 from __future__ import annotations
 
 import numpy as np

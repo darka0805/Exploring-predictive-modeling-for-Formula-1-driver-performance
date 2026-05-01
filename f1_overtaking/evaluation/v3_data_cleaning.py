@@ -1,10 +1,3 @@
-"""V3: Data preprocessing ablation.
-
-Tests:
-  - NaN handling: forward-fill vs. median fill.
-  - Class balancing ratios (negatives:positives): 1:10, 1:20, 1:50, none.
-  - Feature scaling: raw vs. StandardScaler.
-"""
 from __future__ import annotations
 
 import numpy as np

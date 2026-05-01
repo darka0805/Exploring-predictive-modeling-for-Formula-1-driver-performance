@@ -1,15 +1,3 @@
-"""E7 orchestrator: train on 2022-2024, evaluate on 2025.
-
-Pipeline:
-  1. Load + balance training data, split into tune/val.
-  2. Sweep hyperparameters per model, pick best by val F1.
-  3. Refit best config on full balanced train, score on 2025 test.
-  4. Build stacking ensembles over the trained base models.
-  5. Rerun top base models on full raw train for comparison.
-  6. Save CSVs, plots, and a markdown report.
-
-Sub-modules: e7_config, e7_data, e7_plots, e7_stacking, e7_full_rerun, e7_report.
-"""
 from __future__ import annotations
 
 import json
@@ -19,30 +7,263 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
-from config import PRIMARY_TRACK, RESULTS_DIR, SEED
-from models import MODEL_REGISTRY
-from train import train_and_evaluate
-
-from experiments.e7_config import (
-    TRAIN_YEARS, TEST_YEAR, NEG_POS_RATIO, VAL_SIZE,
-    FULL_DATA_RERUN_TOP_K, EXPERIMENT_TAG, MODEL_SWEEPS,
+from config import (
+    PRIMARY_TRACK, RESULTS_DIR, SEED,
+    E7_TRAIN_YEARS, E7_TEST_YEAR, E7_NEG_POS_RATIO, E7_VAL_SIZE,
+    E7_FULL_DATA_RERUN_TOP_K, E7_EXPERIMENT_TAG, E7_MODEL_SWEEPS,
+    E7_STACKING_CONFIGS,
 )
-from experiments.e7_data import (
-    to_1_to_k_balance, load_single_track_year, combine, safe_score,
-)
-from experiments.e7_plots import (
+from data_preprocessing_and_labeling.dataset_builder import (
+    build_single_race_dataset, load_dataset)
+from evaluation.evaluate import (
+    compute_metrics, plot_pr_roc, plot_confusion,
     plot_class_balance, plot_final_model_comparison,
     plot_combined_model_comparison, plot_full_rerun_comparison,
     plot_tuning_quality,
 )
-from experiments.e7_stacking import run_stacking_ensembles
-from experiments.e7_full_rerun import rerun_top_models_on_full_data
-from experiments.e7_report import write_report
+from models import MODEL_REGISTRY
+from train import train_and_evaluate
 
 warnings.filterwarnings("ignore")
 
+
+# ----- data helpers -----
+
+def to_1_to_k_balance(X: np.ndarray, y: np.ndarray,
+                      neg_per_pos: int = E7_NEG_POS_RATIO,
+                      seed: int = SEED
+                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Keep all positives and sample negatives to achieve ~1:neg_per_pos."""
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    if len(pos_idx) == 0:
+        raise ValueError(
+            f"No positive samples found; cannot create 1:{neg_per_pos} train ratio.")
+    n_neg_keep = min(len(neg_idx), len(pos_idx) * neg_per_pos)
+    rng = np.random.default_rng(seed)
+    keep_neg_idx = (rng.choice(neg_idx, size=n_neg_keep, replace=False)
+                    if n_neg_keep < len(neg_idx) else neg_idx)
+    keep_idx = np.concatenate([pos_idx, keep_neg_idx])
+    rng.shuffle(keep_idx)
+    return X[keep_idx], y[keep_idx], keep_idx
+
+
+def load_single_track_year(year: int, track: str) -> dict:
+    path = build_single_race_dataset(year, track)
+    if path is None:
+        raise RuntimeError(
+            f"Failed to build dataset for year={year}, track='{track}'.")
+    return load_dataset(path)
+
+
+def combine(datasets: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    X = np.concatenate([d["X"] for d in datasets], axis=0)
+    y = np.concatenate([d["y"] for d in datasets], axis=0)
+    return X, y
+
+
+def safe_score(value: float) -> float:
+    if value is None or np.isnan(value):
+        return -1.0
+    return float(value)
+
+
+# ----- stacking -----
+
+def run_stacking_ensembles(best_cfg_by_model: dict[str, dict],
+                           fitted_full_models: dict[str, object],
+                           X_tr: np.ndarray, y_tr: np.ndarray,
+                           X_val: np.ndarray, y_val: np.ndarray,
+                           X_test: np.ndarray, y_test: np.ndarray
+                           ) -> pd.DataFrame:
+    rows: list[dict] = []
+    for stack_cfg in E7_STACKING_CONFIGS:
+        ensemble_name = stack_cfg["name"]
+        base_models = [m for m in stack_cfg["base_models"]
+                       if m in best_cfg_by_model]
+        if len(base_models) < 2:
+            continue
+        print("\n" + "-" * 72)
+        print(f"Stacking: {ensemble_name} | bases={base_models}")
+        print("-" * 72)
+
+        val_features, test_features = [], []
+        for model_name in base_models:
+            model_cls = MODEL_REGISTRY[model_name]
+            cfg = best_cfg_by_model[model_name]
+            base_for_val = model_cls(extra_params=cfg)
+            base_for_val.fit(X_tr, y_tr, X_val=X_val, y_val=y_val)
+            val_features.append(base_for_val.predict_proba(X_val))
+            base_full = fitted_full_models[model_name]
+            test_features.append(base_full.predict_proba(X_test))
+
+        X_meta_train = np.column_stack(val_features)
+        X_meta_test = np.column_stack(test_features)
+
+        t0 = time.perf_counter()
+        meta = LogisticRegression(
+            C=float(stack_cfg.get("meta_c", 1.0)),
+            max_iter=2000, class_weight="balanced",
+            solver="lbfgs", random_state=SEED,
+        )
+        meta.fit(X_meta_train, y_val)
+        y_prob = meta.predict_proba(X_meta_test)[:, 1]
+        elapsed = time.perf_counter() - t0
+
+        metrics = compute_metrics(y_test, y_prob)
+        label = f"{E7_EXPERIMENT_TAG}_{ensemble_name}"
+        print(f"Stacked metrics for {ensemble_name}: "
+              f"PR-AUC={metrics.get('pr_auc', np.nan):.4f}, "
+              f"F1={metrics.get('f1', np.nan):.4f}")
+        plot_pr_roc(y_test, y_prob, label)
+        y_pred = (y_prob >= metrics["threshold"]).astype(int)
+        plot_confusion(y_test, y_pred, label)
+
+        rows.append({
+            "ensemble": ensemble_name,
+            "base_models_json": json.dumps(base_models),
+            "meta_model": "LogisticRegression",
+            "meta_params_json": json.dumps({
+                "C": float(stack_cfg.get("meta_c", 1.0)),
+                "max_iter": 2000, "class_weight": "balanced",
+            }, sort_keys=True),
+            "pr_auc": float(metrics.get("pr_auc", np.nan)),
+            "roc_auc": float(metrics.get("roc_auc", np.nan)),
+            "f1": float(metrics.get("f1", np.nan)),
+            "precision": float(metrics.get("precision", np.nan)),
+            "recall": float(metrics.get("recall", np.nan)),
+            "threshold": float(metrics.get("threshold", np.nan)),
+            "n_total": int(metrics.get("n_total", 0)),
+            "n_pos": int(metrics.get("n_pos", 0)),
+            "fit_seconds": round(elapsed, 3),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "ensemble", "base_models_json", "meta_model", "meta_params_json",
+            "pr_auc", "roc_auc", "f1", "precision", "recall", "threshold",
+            "n_total", "n_pos", "fit_seconds",
+        ])
+    return pd.DataFrame(rows).sort_values("pr_auc", ascending=False)
+
+
+# ----- full-data rerun -----
+
+def rerun_top_models_on_full_data(final_df: pd.DataFrame,
+                                  best_cfg_by_model: dict[str, dict],
+                                  X_train_full: np.ndarray,
+                                  y_train_full: np.ndarray,
+                                  X_test: np.ndarray,
+                                  y_test: np.ndarray,
+                                  top_k: int = E7_FULL_DATA_RERUN_TOP_K
+                                  ) -> pd.DataFrame:
+    """Retrain top base models (by F1) on full raw train data and re-evaluate."""
+    top_models = list(
+        final_df.sort_values(["f1", "pr_auc"], ascending=[False, False])
+                ["model"].head(top_k).values)
+
+    rows: list[dict] = []
+    for model_name in top_models:
+        model_cls = MODEL_REGISTRY[model_name]
+        cfg = best_cfg_by_model.get(model_name, {})
+        exp_name = f"{E7_EXPERIMENT_TAG}_fullraw_{model_name}"
+
+        print("\n" + "-" * 72)
+        print(f"Full-data rerun: {model_name} on raw 2022-2024 train")
+        print("-" * 72)
+
+        t0 = time.perf_counter()
+        out = train_and_evaluate(
+            model_cls, X_train_full, y_train_full, X_test, y_test,
+            experiment_name=exp_name, model_extra=cfg,
+            save_plots=True, persist_metrics=False,
+        )
+        elapsed = time.perf_counter() - t0
+        m = out["metrics"]
+
+        rows.append({
+            "model": model_name,
+            "train_mode": "full_raw_2022_2024",
+            "pr_auc": float(m.get("pr_auc", np.nan)),
+            "roc_auc": float(m.get("roc_auc", np.nan)),
+            "f1": float(m.get("f1", np.nan)),
+            "precision": float(m.get("precision", np.nan)),
+            "recall": float(m.get("recall", np.nan)),
+            "threshold": float(m.get("threshold", np.nan)),
+            "n_total": int(m.get("n_total", 0)),
+            "n_pos": int(m.get("n_pos", 0)),
+            "fit_seconds": round(elapsed, 3),
+            "best_params_json": json.dumps(cfg, sort_keys=True),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "model", "train_mode", "pr_auc", "roc_auc", "f1", "precision",
+            "recall", "threshold", "n_total", "n_pos", "fit_seconds",
+            "best_params_json",
+        ])
+    return pd.DataFrame(rows).sort_values("f1", ascending=False)
+
+
+# ----- markdown report -----
+
+def _markdown_table(df: pd.DataFrame) -> str:
+    cols = list(df.columns)
+    lines = [
+        "| " + " | ".join(cols) + " |",
+        "| " + " | ".join(["---"] * len(cols)) + " |",
+    ]
+    for _, row in df.iterrows():
+        lines.append("| " + " | ".join(str(row[c]) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def write_report(report_path: Path,
+                 class_stats: pd.DataFrame,
+                 sweep_summary: pd.DataFrame,
+                 top_trials: pd.DataFrame,
+                 stacking_df: pd.DataFrame,
+                 final_df: pd.DataFrame,
+                 full_rerun_df: pd.DataFrame,
+                 plots: dict[str, str]):
+    lines: list[str] = []
+    lines.append("# 2025 Holdout Experiments (2022-2024 Train, 2025 Test)")
+    lines.append("")
+    lines.append("## Setup")
+    lines.append("")
+    lines.append("- Track: Abu Dhabi Grand Prix")
+    lines.append("- Train years: 2022, 2023, 2024")
+    lines.append("- Test year: 2025")
+    lines.append(f"- Train balancing: successful:unsuccessful = 1:{E7_NEG_POS_RATIO}")
+    lines.append("- Model families used: XGBoost, LightGBM, RandomForest, CNN, BiGRU")
+    lines.append("")
+    lines.append("## Class Distribution"); lines.append("")
+    lines.append(_markdown_table(class_stats)); lines.append("")
+    lines.append("## Sweep Coverage"); lines.append("")
+    lines.append(_markdown_table(sweep_summary)); lines.append("")
+    lines.append("## Top Validation Trials (per model)"); lines.append("")
+    lines.append(_markdown_table(top_trials)); lines.append("")
+    lines.append("## Final 2025 Test Results (Base Models)"); lines.append("")
+    lines.append(_markdown_table(final_df)); lines.append("")
+    lines.append("## Stacking Ensembles"); lines.append("")
+    lines.append("No stacking results generated."
+                 if len(stacking_df) == 0 else _markdown_table(stacking_df))
+    lines.append("")
+    lines.append("## Best Models Rerun On Full 2022-2024 Raw Train Data")
+    lines.append("")
+    lines.append("No full-data reruns generated."
+                 if len(full_rerun_df) == 0 else _markdown_table(full_rerun_df))
+    lines.append("")
+    lines.append("## Generated Plots"); lines.append("")
+    for name, rel in plots.items():
+        lines.append(f"- {name}: {rel}")
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ----- main orchestrator -----
 
 def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     np.random.seed(SEED)
@@ -53,8 +274,8 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
     print("=" * 72)
 
     print("\nPreparing datasets...")
-    train_datasets = [load_single_track_year(y, PRIMARY_TRACK) for y in TRAIN_YEARS]
-    test_dataset = load_single_track_year(TEST_YEAR, PRIMARY_TRACK)
+    train_datasets = [load_single_track_year(y, PRIMARY_TRACK) for y in E7_TRAIN_YEARS]
+    test_dataset = load_single_track_year(E7_TEST_YEAR, PRIMARY_TRACK)
 
     X_train_raw, y_train_raw = combine(train_datasets)
     X_test, y_test = test_dataset["X"], test_dataset["y"]
@@ -63,13 +284,13 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
     print(f"Test 2025: {len(y_test)} samples (pos={int(y_test.sum())})")
 
     X_train_bal, y_train_bal, _ = to_1_to_k_balance(
-        X_train_raw, y_train_raw, neg_per_pos=NEG_POS_RATIO, seed=SEED)
+        X_train_raw, y_train_raw, neg_per_pos=E7_NEG_POS_RATIO, seed=SEED)
     print(f"Train balanced: {len(y_train_bal)} samples "
           f"(pos={int(y_train_bal.sum())}, neg={int((y_train_bal == 0).sum())})")
 
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_train_bal, y_train_bal,
-        test_size=VAL_SIZE, random_state=SEED, stratify=y_train_bal,
+        test_size=E7_VAL_SIZE, random_state=SEED, stratify=y_train_bal,
     )
     print(f"Tune split: train={len(y_tr)} val={len(y_val)}")
 
@@ -80,7 +301,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
 
     for model_name in MODEL_REGISTRY.keys():
         model_cls = MODEL_REGISTRY[model_name]
-        sweep = MODEL_SWEEPS.get(model_name, [{}])
+        sweep = E7_MODEL_SWEEPS.get(model_name, [{}])
 
         print("\n" + "-" * 72)
         print(f"Model: {model_name} | trials: {len(sweep)}")
@@ -90,7 +311,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
         best_cfg: dict = {}
 
         for trial_id, cfg in enumerate(sweep, start=1):
-            trial_tag = f"{EXPERIMENT_TAG}_tune_{model_name}_t{trial_id:02d}"
+            trial_tag = f"{E7_EXPERIMENT_TAG}_tune_{model_name}_t{trial_id:02d}"
             t0 = time.perf_counter()
             out = train_and_evaluate(
                 model_cls, X_tr, y_tr, X_val, y_val,
@@ -122,7 +343,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
         print(f"Best config by val F1: {json.dumps(best_cfg, sort_keys=True)}")
         best_cfg_by_model[model_name] = dict(best_cfg)
 
-        final_tag = f"{EXPERIMENT_TAG}_test_{model_name}"
+        final_tag = f"{E7_EXPERIMENT_TAG}_test_{model_name}"
         t0 = time.perf_counter()
         final_out = train_and_evaluate(
             model_cls, X_train_bal, y_train_bal, X_test, y_test,
@@ -163,7 +384,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
         best_cfg_by_model=best_cfg_by_model,
         X_train_full=X_train_raw, y_train_full=y_train_raw,
         X_test=X_test, y_test=y_test,
-        top_k=FULL_DATA_RERUN_TOP_K,
+        top_k=E7_FULL_DATA_RERUN_TOP_K,
     )
 
     tuning_path = RESULTS_DIR / "e7_2025_tuning_results.csv"
@@ -180,9 +401,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
     top_trials = (
         tuning_df.sort_values(["model", "pr_auc", "f1"],
                               ascending=[True, False, False])
-        .groupby("model", as_index=False)
-        .head(3)
-        .copy()
+        .groupby("model", as_index=False).head(3).copy()
     )
     top_trials.to_csv(top_trials_path, index=False)
 
@@ -192,7 +411,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
          "positive": int((y_train_raw == 1).sum()),
          "negative": int((y_train_raw == 0).sum()),
          "pos_rate": round(float((y_train_raw == 1).mean()), 6)},
-        {"split": f"train_balanced_1_to_{NEG_POS_RATIO}",
+        {"split": f"train_balanced_1_to_{E7_NEG_POS_RATIO}",
          "episodes": int(len(y_train_bal)),
          "positive": int((y_train_bal == 1).sum()),
          "negative": int((y_train_bal == 0).sum()),
@@ -206,7 +425,7 @@ def run_2025_holdout_experiments() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataF
 
     sweep_summary = pd.DataFrame([
         {"model": model_name,
-         "trials": len(MODEL_SWEEPS.get(model_name, [{}])),
+         "trials": len(E7_MODEL_SWEEPS.get(model_name, [{}])),
          "selection_metric": "max val F1, then PR-AUC"}
         for model_name in MODEL_REGISTRY.keys()
     ])

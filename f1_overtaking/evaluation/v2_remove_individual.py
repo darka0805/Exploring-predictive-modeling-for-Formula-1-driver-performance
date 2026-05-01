@@ -1,8 +1,3 @@
-"""V2: Remove individual features (within the top-N most impactful groups).
-
-After V1 reveals the dominant groups, ablate single features inside them.
-Goal: find the SPECIFIC features that drive performance.
-"""
 from __future__ import annotations
 
 import numpy as np

@@ -1,4 +1,3 @@
-"""V5: 3-fold cross-track cross-validation (Monza / Bahrain / Abu Dhabi)."""
 from __future__ import annotations
 
 import numpy as np

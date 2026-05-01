@@ -1,11 +1,3 @@
-"""V1: Remove feature groups one-by-one.
-
-"If I remove this group of features, does the model get worse?"
-
-Starts with all 45 features -> baseline. Then removes one FEATURE_GROUPS
-group at a time and reports the drop. Goal: identify which feature groups
-matter most.
-"""
 from __future__ import annotations
 
 import numpy as np
